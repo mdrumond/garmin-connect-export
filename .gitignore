@@ -5,6 +5,9 @@ __pycache__/
 extras/
 venv/
 *_garmin_connect_export/
+*_garmin_connect_export_gpx/
 *.pyc
 *.log
 lint*.txt
+tracks/
+output/
