@@ -1,10 +1,7 @@
-
-import gpxpy
 import datetime
-from geopy import distance
-from math import sqrt, floor
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 import os
 from os import listdir
@@ -73,9 +70,6 @@ def extract_points(fit_file_name):
   df = add_delta_col(df, 'time', 'time-start', 'time_delta', True)
   df = add_delta_col(df, 'distance', 'distance-start', 'distance_delta')
 
-  print(df['distance_delta'])
-  print(df['time_delta'])
-
   df_selected = df.loc[:, ['distance_delta','time_delta']]
 
   df_selected['distance_cumsum'] = df_selected['distance_delta'].cumsum()
@@ -117,33 +111,32 @@ def get_best_section(fit_file, df, df_selected, section):
   return df_output.loc[df_output['minutes_per_kilometer'].idxmin()]
 
 
-def process_file(input_folder, output_folder, sections):
+def process_file(input_folder, output_folder, fit_file, sections):
   df_final = pd.DataFrame(columns=['time', 'distance', 'minutes_per_kilometer'])
   path = os.path.join(os.path.abspath(''), input_folder, fit_file)
   df, df_selected = extract_points(path)
   
   if df is None:
-    continue
+    return
   
   # Here we loop over sections
   for section in sections:
     s_best = get_best_section(fit_file, df, df_selected, section)
     if s_best is None:
-      continue
-    print('s_best', s_best)
+      return
     df_final = df_final.append(s_best)
 
   df_final.to_pickle(os.path.join(os.path.abspath(''), output_folder, fit_file + '.pkl'))
 
 # All the sections you PB's for in meters:
 def main():
-  sections = [1000,(1000*1.60934),(2000*1.60934),3000,5000,10000,21097.5,30000,42195]
+  sections = [1000,(1000*1.60934),3000,(2000*1.60934),5000,10000,21097.5,30000,42195]
   input_folder = 'tracks'
   output_folder = 'output'
   path = os.path.join(os.path.abspath(''), input_folder)
   allfiles = [f for f in listdir(path) if isfile(join(path, f))]
-  for fit_file in allfiles:
-    process_file(input_folder,output_folder,sections)
+  for fit_file in tqdm(allfiles):
+    process_file(input_folder,output_folder,fit_file,sections)
 
 if __name__ == "__main__":
     main()
