@@ -11,3 +11,4 @@ venv/
 lint*.txt
 tracks/
 output/
+invalid/
