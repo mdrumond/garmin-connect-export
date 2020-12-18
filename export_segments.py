@@ -2,7 +2,8 @@ import datetime
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
-
+from multiprocessing import Pool
+from itertools import zip_longest
 import os
 from os import listdir
 from os.path import isfile, join
@@ -106,32 +107,52 @@ def get_best_section(fit_file, df, section):
   return df_output.loc[df_output['minutes_per_kilometer'].idxmin()]
 
 
-def process_file(input_folder, output_folder, fit_file, sections):
+def process_file(input_folder, output_folder, invalid_folder, fit_file, sections):
+  if fit_file is None:
+    return
   df_final = pd.DataFrame(columns=['time', 'distance', 'minutes_per_kilometer'])
-  path = os.path.join(os.path.abspath(''), input_folder, fit_file)
-  df = extract_points(path)
+  df = extract_points(os.path.join(os.path.abspath(''), input_folder, fit_file))
   
   if df is None:
-    return
+    with open(os.path.join(os.path.abspath(''), invalid_folder, fit_file, ), 'w+') as f:
+      f.write(' ')
+    return None
   
   # Here we loop over sections
   for section in sections:
     s_best = get_best_section(fit_file, df, section)
-    if s_best is None:
-      return
-    df_final = df_final.append(s_best)
+    if s_best is not None:
+      df_final = df_final.append(s_best)
 
   df_final.to_pickle(os.path.join(os.path.abspath(''), output_folder, fit_file + '.pkl'))
+
+def list_all_files(folder, condition = lambda x: True):
+  path = os.path.join(os.path.abspath(''), folder)
+  return [f for f in listdir(path) 
+          if isfile(join(path, f)) and condition(f)]
 
 # All the sections you PB's for in meters:
 def main():
   sections = [1000,(1000*1.60934),3000,(2000*1.60934),5000,10000,21097.5,30000,42195]
   input_folder = 'tracks'
+  invalid_folder = 'invalid'
   output_folder = 'output'
-  path = os.path.join(os.path.abspath(''), input_folder)
-  allfiles = [f for f in listdir(path) if isfile(join(path, f))]
-  for fit_file in tqdm(allfiles):
-    process_file(input_folder,output_folder,fit_file,sections)
+  threads = 8
+
+  invalid_files = list_all_files(invalid_folder)
+  allready_processed_files = list_all_files(output_folder)
+  allready_processed_files = [ f[:-4] for f in allready_processed_files]
+  allfiles = list_all_files(
+    input_folder, 
+    lambda f: (f not in allready_processed_files) and (f not in invalid_files))
+
+  allfiles_grouped = list(zip_longest(*([iter(allfiles)] * threads), fillvalue=None))
+
+  for fit_files in tqdm(allfiles_grouped):
+    args = [(input_folder,output_folder,invalid_folder,f,sections) for f in fit_files]
+    with Pool(threads) as p:
+        p.starmap(process_file, args)
+    
 
 if __name__ == "__main__":
     main()
