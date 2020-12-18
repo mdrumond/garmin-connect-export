@@ -30,7 +30,7 @@ def profile(func):
 
 def add_delta_col(df, orig_col, rolled_col, delta_col, is_time=False):
   df[rolled_col] = df[orig_col]
-  df[rolled_col].iloc[-1] = np.nan
+  df.iloc[-1, df.columns.get_loc(rolled_col)] = np.nan
   df[rolled_col] = np.roll(df[rolled_col], 1)
   df = df.fillna(method='bfill')
   if is_time:
@@ -46,7 +46,7 @@ def extract_points(fit_file_name):
     for frame in fit:
       if (isinstance(frame, fitdecode.FitDataMessage) and frame.name == 'sport' 
           and frame.get_field('sport').value != 'running'):
-          return None, None
+          return None
 
 
       if isinstance(frame, fitdecode.FitDataMessage) and frame.name == 'record':
@@ -63,22 +63,17 @@ def extract_points(fit_file_name):
   df = df.fillna(method='ffill')
   df = df.fillna(method='bfill')
   
-  # Create a column with values that are 'shifted' one forwards, so we can create calculations for differences.
-  
   df['time'] = pd.to_datetime(df['time'], utc=True)
   df['time'] = df['time'].dt.tz_localize(tz=None)
   df = add_delta_col(df, 'time', 'time-start', 'time_delta', True)
   df = add_delta_col(df, 'distance', 'distance-start', 'distance_delta')
+  df['distance_cumsum'] = df['distance_delta'].cumsum()
+  df['time_cumsum'] = df['time_delta'].cumsum()
 
-  df_selected = df.loc[:, ['distance_delta','time_delta']]
-
-  df_selected['distance_cumsum'] = df_selected['distance_delta'].cumsum()
-  df_selected['time_cumsum'] = df_selected['time_delta'].cumsum()
-
-  return df, df_selected
+  return df
 
 # @profile
-def get_best_section(fit_file, df, df_selected, section):
+def get_best_section(fit_file, df, section):
   # If the total distance of the workout is smaller then the section 
   # we're looking for we can skip this iteration.
   if df['distance_delta'].sum() < section:
@@ -92,13 +87,13 @@ def get_best_section(fit_file, df, df_selected, section):
   total_distance = df['distance_delta'].sum()
   total_time = df['time_delta'].sum()
 
-  df_selected_distance_cumsum = df_selected['distance_cumsum']
-  for i in range(len(df_selected.index)):
-    curr_row = df_selected.loc[i]
+  df_distance_cumsum = df['distance_cumsum']
+  for i in range(len(df.index)):
+    curr_row = df.loc[i]
     distance_cumsum = curr_row['distance_cumsum']
     time_cumsum = curr_row['time_cumsum']
 
-    df_section = df_selected[(df_selected_distance_cumsum - distance_cumsum) >= section]
+    df_section = df[(df_distance_cumsum - distance_cumsum) >= section]
     if(len(df_section.index) != 0):
       time = df_section['time_cumsum'].iat[0] - time_cumsum
       distance_i = df_section['distance_cumsum'].iat[0] - distance_cumsum
@@ -114,14 +109,14 @@ def get_best_section(fit_file, df, df_selected, section):
 def process_file(input_folder, output_folder, fit_file, sections):
   df_final = pd.DataFrame(columns=['time', 'distance', 'minutes_per_kilometer'])
   path = os.path.join(os.path.abspath(''), input_folder, fit_file)
-  df, df_selected = extract_points(path)
+  df = extract_points(path)
   
   if df is None:
     return
   
   # Here we loop over sections
   for section in sections:
-    s_best = get_best_section(fit_file, df, df_selected, section)
+    s_best = get_best_section(fit_file, df, section)
     if s_best is None:
       return
     df_final = df_final.append(s_best)
