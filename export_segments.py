@@ -4,8 +4,6 @@ import pandas as pd
 from tqdm import tqdm
 from multiprocessing import Pool
 from itertools import zip_longest
-import os
-from os import listdir
 from os.path import isfile, join
 
 import cProfile
@@ -13,6 +11,8 @@ import io
 import pstats
 
 import fitdecode
+
+from utils import log, list_all_files
 
 def profile(func):
   def wrapper(*args, **kwargs):
@@ -29,6 +29,19 @@ def profile(func):
 
   return wrapper
 
+def fit_is_running(fit_file_name):
+  with fitdecode.FitReader(fit_file_name) as fit:
+    for frame in fit:
+      if (isinstance(frame, fitdecode.FitDataMessage) and 
+          frame.name in ['sport', 'workout', 'lap', 'session']):
+        if frame.has_field('sport'):
+          if frame.get_field('sport').value != 'running':
+            return False
+          else:
+            return True
+
+  return False
+
 def add_delta_col(df, orig_col, rolled_col, delta_col, is_time=False):
   df[rolled_col] = df[orig_col]
   df.iloc[-1, df.columns.get_loc(rolled_col)] = np.nan
@@ -43,19 +56,32 @@ def add_delta_col(df, orig_col, rolled_col, delta_col, is_time=False):
 # @profile
 def extract_points(fit_file_name):
   points = []
+  if not fit_is_running(fit_file_name):
+    return None
+
   with fitdecode.FitReader(fit_file_name) as fit:
     for frame in fit:
-      if (isinstance(frame, fitdecode.FitDataMessage) and frame.name == 'sport' 
-          and frame.get_field('sport').value != 'running'):
-          return None
-
-
       if isinstance(frame, fitdecode.FitDataMessage) and frame.name == 'record':
-        points.append([
-          frame.get_field('timestamp').value, frame.get_field('distance').value,
-          frame.get_field('heart_rate').value, frame.get_field('enhanced_speed').value,
-          frame.get_field('enhanced_altitude').value])
+        fields_read = ['timestamp', 'distance', 'heart_rate', 'enhanced_speed',
+                       'enhanced_altitude']
+        optional_fields = ['heart_rate', 'enhanced_altitude']
+        current_point = []
+        for f in fields_read:
+          if frame.has_field(f):
+            current_point.append(frame.get_field(f).value)
+          else:
+            if f in optional_fields:
+              current_point.append(0)
+            else:
+              log("File %s from %s is missing field %s. It has fields: %s" % 
+                              (fit_file_name, frame.get_field('timestamp').value, f, 
+                               ", ".join([field.name for field in frame.fields])))
+              return None
+        points.append(current_point)
   
+  if len(points) == 0:
+    return None
+
   df = pd.DataFrame(points, columns=['time', 'distance', 'heart_rate', 'speed', 'altitude'])
     
   df = df.sort_values(by=['time'])
@@ -114,7 +140,7 @@ def process_file(input_folder, output_folder, invalid_folder, fit_file, sections
   df = extract_points(os.path.join(os.path.abspath(''), input_folder, fit_file))
   
   if df is None:
-    with open(os.path.join(os.path.abspath(''), invalid_folder, fit_file, ), 'w+') as f:
+    with open(os.path.join(os.path.abspath(''), invalid_folder, fit_file), 'w+') as f:
       f.write(' ')
     return None
   
@@ -126,18 +152,13 @@ def process_file(input_folder, output_folder, invalid_folder, fit_file, sections
 
   df_final.to_pickle(os.path.join(os.path.abspath(''), output_folder, fit_file + '.pkl'))
 
-def list_all_files(folder, condition = lambda x: True):
-  path = os.path.join(os.path.abspath(''), folder)
-  return [f for f in listdir(path) 
-          if isfile(join(path, f)) and condition(f)]
-
 # All the sections you PB's for in meters:
 def main():
   sections = [1000,(1000*1.60934),3000,(2000*1.60934),5000,10000,21097.5,30000,42195]
   input_folder = 'tracks'
   invalid_folder = 'invalid'
   output_folder = 'output'
-  threads = 8
+  threads = 4
 
   invalid_files = list_all_files(invalid_folder)
   allready_processed_files = list_all_files(output_folder)
